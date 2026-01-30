@@ -131,25 +131,17 @@ class TestSQLAlchemyCredentialRepository(CredentialRepositoryContractTests):
     """Test SQLAlchemyCredentialRepository against contract."""
 
     @pytest.fixture
-    def repository(self):
-        """Create SQLAlchemy repository with in-memory database."""
-        try:
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-            from auth_core.adapters.repositories.sqlalchemy import (
-                Base,
-                SQLAlchemyCredentialRepository,
-            )
-        except ImportError:
-            pytest.skip("SQLAlchemy not installed")
+    def repository(self, db_session):
+        """Create SQLAlchemy repository with test database."""
+        from auth_core.adapters.repositories.sqlalchemy import SQLAlchemyCredentialRepository
+        return SQLAlchemyCredentialRepository(db_session)
 
-        # Create in-memory database
-        engine = create_engine("sqlite:///:memory:")
-        Base.metadata.create_all(engine)
-        Session = sessionmaker(bind=engine)
-        session = Session()
 
-        yield SQLAlchemyCredentialRepository(session)
+class TestMongoDBCredentialRepository(CredentialRepositoryContractTests):
+    """Test MongoDBCredentialRepository against contract."""
 
-        # Cleanup
-        session.close()
+    @pytest.fixture
+    def repository(self, mongo_db):
+        """Create MongoDB repository with test database."""
+        from auth_core.adapters.repositories.mongodb import MongoDBCredentialRepository
+        return MongoDBCredentialRepository(mongo_db)

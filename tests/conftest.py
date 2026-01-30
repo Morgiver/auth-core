@@ -2,6 +2,7 @@
 Pytest configuration and shared fixtures for auth-core tests.
 """
 
+import os
 import pytest
 from datetime import datetime, timedelta
 from typing import Generator
@@ -314,4 +315,120 @@ def password_reset_service(credential_repo, reset_repo, argon2_hasher, event_bus
         password_hasher=argon2_hasher,
         event_bus=event_bus,
         reset_token_lifetime=timedelta(hours=1),
+    )
+
+
+# ============================================================================
+# Database Fixtures (SQLAlchemy)
+# ============================================================================
+
+@pytest.fixture(scope='function')
+def db_engine():
+    """Create SQLAlchemy engine for testing"""
+    conn_string = os.environ.get('TEST_DB_CONNECTION_STRING')
+    db_type = os.environ.get('TEST_DB_TYPE', 'memory')
+
+    if not conn_string or db_type != 'postgresql':
+        pytest.skip("PostgreSQL database not configured")
+
+    from sqlalchemy import create_engine
+    engine = create_engine(conn_string)
+
+    # Create tables
+    from auth_core.adapters.repositories.sqlalchemy.models import Base
+    Base.metadata.create_all(engine)
+
+    yield engine
+
+    # Cleanup tables after test
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
+@pytest.fixture(scope='function')
+def db_session(db_engine):
+    """Create SQLAlchemy session for testing"""
+    from sqlalchemy.orm import sessionmaker
+    SessionLocal = sessionmaker(bind=db_engine)
+    session = SessionLocal()
+
+    yield session
+
+    session.rollback()
+    session.close()
+
+
+# ============================================================================
+# Database Fixtures (MongoDB)
+# ============================================================================
+
+@pytest.fixture(scope='function')
+def mongo_client():
+    """Create MongoDB client for testing"""
+    conn_string = os.environ.get('TEST_DB_CONNECTION_STRING')
+    db_type = os.environ.get('TEST_DB_TYPE', 'memory')
+
+    if not conn_string or db_type != 'mongodb':
+        pytest.skip("MongoDB database not configured")
+
+    from pymongo import MongoClient
+    client = MongoClient(conn_string)
+
+    yield client
+
+    client.close()
+
+
+@pytest.fixture(scope='function')
+def mongo_db(mongo_client):
+    """Create MongoDB database for testing"""
+    db_name = os.environ.get('TEST_DB_NAME', 'test_auth_mongo')
+    db = mongo_client[db_name]
+
+    yield db
+
+    # Cleanup all collections after test
+    for collection_name in db.list_collection_names():
+        db[collection_name].delete_many({})
+
+
+# ============================================================================
+# Pytest Hooks
+# ============================================================================
+
+def pytest_configure(config):
+    """Register custom markers"""
+    config.addinivalue_line(
+        "markers", "adapter(name): mark test to run only for specific adapter"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip tests based on adapter filter"""
+    adapter_filter = config.getoption("--adapter", default=None)
+
+    if not adapter_filter:
+        return
+
+    for item in items:
+        # Check if test class name indicates specific adapter
+        if hasattr(item, 'cls') and item.cls:
+            class_name = item.cls.__name__
+
+            # Map class names to adapters
+            if 'SQLAlchemy' in class_name and adapter_filter != 'sqlalchemy':
+                item.add_marker(pytest.mark.skip(reason=f"Skipping SQLAlchemy tests (adapter={adapter_filter})"))
+            elif 'MongoDB' in class_name and adapter_filter != 'mongodb':
+                item.add_marker(pytest.mark.skip(reason=f"Skipping MongoDB tests (adapter={adapter_filter})"))
+            elif 'InMemory' in class_name and adapter_filter not in ['memory', 'inmemory']:
+                item.add_marker(pytest.mark.skip(reason=f"Skipping InMemory tests (adapter={adapter_filter})"))
+
+
+def pytest_addoption(parser):
+    """Add custom command line options"""
+    parser.addoption(
+        "--adapter",
+        action="store",
+        default=None,
+        help="Run tests only for specific adapter (sqlalchemy, mongodb, memory)"
     )
